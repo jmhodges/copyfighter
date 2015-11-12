@@ -9,11 +9,19 @@ Install with `go get` or similar.
 Example output
 ---------------
     $ copyfighter path/to/pkg
+    # parameter 'f' at index 0 should be made into a pointer
+    func CallsFoo(f Foo)
+    
+    # receiver, and parameter 'o' at index 0 should be made into pointers
+    func (Foo).OnOtherToo(o other)
+    
     # receiver should be made into a pointer
     func (other).OnStruct()
-
+    
     # receiver should be made into a pointer
     func (other).OnStruct2()
+
+
     
 
 Defaults
