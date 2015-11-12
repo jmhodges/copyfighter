@@ -6,7 +6,7 @@ instead of by pointer. It helps you help your code.
 
 Every Go function call copies the values given to it, including structs. When
 large structs are passed around without using a pointer to them, the copying of
-new data in memory causes more allocations and more work for your garbase
+new data in memory causes more allocations and more work for your garbage
 collector.
 
 Install with `go get` or similar.
