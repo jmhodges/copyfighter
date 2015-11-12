@@ -1,8 +1,7 @@
 copyfighter
 ===========
 
-Copyfighter reports Go functions that are passing large structs by value,
-instead of by pointer. It helps you help your code.
+Copyfighter reports Go functions that are passing large structs by value. It helps you help your code.
 
 Every Go function call copies the values given to it, including structs. When
 large structs are passed around without using a pointer to them, the copying of
