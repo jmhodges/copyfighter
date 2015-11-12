@@ -43,5 +43,4 @@ FAQ
 
 Why not just use Go's heap profiler to fix these problems when they show up?
 
-Because copyfighter can find problems before you ship your code to production so
-you can prevent them before they matter.
+Because copyfighter can find problems before you put your code in production. It's nice to prevent issues before they matter.
