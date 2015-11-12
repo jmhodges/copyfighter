@@ -31,11 +31,12 @@ Example output
     func (other).OnStruct2()
 
 
-Defaults
---------
-By default, it assumes structs wider than 16 bytes (two words on x86\_64) should
+Defaults And Flags
+------------------
+
+By default, copyfighter assumes structs wider than 16 bytes (two words on x86\_64) should
 not be copied. This can be adjusted with the `-max` flag. `max` should typically
-be set to some multiple of the word size.
+be set to some multiple of the word size. You can also adjust the word size and alignment offset for your preferred architecture with `-wordSize` and `-maxAlign`.
 
 FAQ
 ---
