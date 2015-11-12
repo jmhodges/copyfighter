@@ -1,8 +1,13 @@
 copyfighter
 ===========
 
-Copyfighter reports Go functions that are passing large structs by value, instead
-of by pointer, causing too much copying.
+Copyfighter reports Go functions that are passing large structs by value,
+instead of by pointer. It helps you help your code.
+
+Every Go function call copies the values given to it, including structs. When
+large structs are passed around without using a pointer to them, the copying of
+new data in memory causes more allocations and more work for your garbase
+collector.
 
 Install with `go get` or similar.
 
@@ -21,8 +26,6 @@ Example output
     # receiver should be made into a pointer
     func (other).OnStruct2()
 
-
-    
 
 Defaults
 --------
