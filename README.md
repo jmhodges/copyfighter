@@ -36,3 +36,11 @@ Defaults
 By default, it assumes structs wider than 16 bytes (two words on x86\_64) should
 not be copied. This can be adjusted with the `-max` flag. `max` should typically
 be set to some multiple of the word size.
+
+FAQ
+---
+
+Why not just use Go's heap profiler to fix these problems when they show up?
+
+Because copyfighter can find problems before you ship your code to production so
+you can prevent them before they matter.
