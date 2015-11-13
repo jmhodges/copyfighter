@@ -173,24 +173,34 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 
 	wideStructs := make(map[string]*types.TypeName)
 
+	funcs := []*types.Func{}
 	for _, obj := range info.Defs {
 		if tn, ok := obj.(*types.TypeName); ok {
 			if sizes.Sizeof(tn.Type()) > maxWidth {
 				wideStructs[tn.Id()] = tn
 			}
 		}
+		if f, ok := obj.(*types.Func); ok {
+			funcs = append(funcs, f)
+		}
 	}
 
+	sites := findCopySites(funcs, wideStructs)
+
+	return sites, nil
+}
+
+// findCopySites returns a slice of copySites that represent Go function calls
+// that use a large struct without a pointer to it. The wideStructs argument is
+// a map of the struct's TypeName id to its TypeName object.
+func findCopySites(funcs []*types.Func, wideStructs map[string]*types.TypeName) []copySite {
 	sites := []copySite{}
-	for _, obj := range info.Defs {
-		f, ok := obj.(*types.Func)
-		if !ok {
-			continue
-		}
+	for _, f := range funcs {
 		s := f.Type().(*types.Signature)
 		shouldBe := []string{}
+
+		// If the func is a method, check the receiver
 		if s.Recv() != nil {
-			// If the func is a method, check the receiver
 			rt := s.Recv().Type()
 			if isWideStructTyped(rt, wideStructs) {
 				shouldBe = append(shouldBe, "receiver")
@@ -223,7 +233,7 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 			sites = append(sites, copySite{f, shouldBe})
 		}
 	}
-	return sites, nil
+	return sites
 }
 
 func printSitesAndExit(sites []copySite, fset *token.FileSet) {
