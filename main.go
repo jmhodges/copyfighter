@@ -171,13 +171,13 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 		return nil, fmt.Errorf("unable to type check package %#v: %s", pkg.Name, err)
 	}
 
-	wideStructs := make(map[string]*types.TypeName)
+	wideStructs := make(map[string]bool)
 
 	funcs := []*types.Func{}
 	for _, obj := range info.Defs {
 		if tn, ok := obj.(*types.TypeName); ok {
 			if sizes.Sizeof(tn.Type()) > maxWidth {
-				wideStructs[tn.Id()] = tn
+				wideStructs[tn.Id()] = true
 			}
 		}
 		if f, ok := obj.(*types.Func); ok {
@@ -193,7 +193,7 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 // findCopySites returns a slice of copySites that represent Go function calls
 // that use a large struct without a pointer to it. The wideStructs argument is
 // a map of the struct's TypeName id to its TypeName object.
-func findCopySites(funcs []*types.Func, wideStructs map[string]*types.TypeName) []copySite {
+func findCopySites(funcs []*types.Func, wideStructs map[string]bool) []copySite {
 	sites := []copySite{}
 	for _, f := range funcs {
 		s := f.Type().(*types.Signature)
@@ -290,10 +290,9 @@ func (s sortedCopySites) Less(i, j int) bool {
 
 // isWideStructTyped returns true if the given type is a struct (not a pointer to
 // a struct) that is in wideStructs.
-func isWideStructTyped(t types.Type, wideStructs map[string]*types.TypeName) bool {
+func isWideStructTyped(t types.Type, wideStructs map[string]bool) bool {
 	if named, ok := t.(*types.Named); ok {
-		_, found := wideStructs[named.Obj().Id()]
-		return found
+		return wideStructs[named.Obj().Id()]
 	}
 	return false
 }
