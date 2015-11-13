@@ -291,8 +291,8 @@ func (s sortedCopySites) Less(i, j int) bool {
 // isWideStructTyped returns true if the given type is a struct (not a pointer to
 // a struct) that is in wideStructs.
 func isWideStructTyped(t types.Type, wideStructs map[string]*types.TypeName) bool {
-	if recvType, ok := t.(*types.Named); ok {
-		_, found := wideStructs[recvType.Obj().Id()]
+	if named, ok := t.(*types.Named); ok {
+		_, found := wideStructs[named.Obj().Id()]
 		return found
 	}
 	return false
