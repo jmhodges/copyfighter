@@ -287,26 +287,6 @@ func isWideStructTyped(t types.Type, wideStructs map[string]*types.TypeName) boo
 	return false
 }
 
-// flattenToNamed takes type that is a *types.Pointer or a *types.Named and
-// returns the *types.Named given or, if a *types.Pointer was given, the first
-// *types.Named type that the Pointer type is referencing. In the latter case,
-// if Pointers are pointing to Pointers, all of them will be followed until the
-// Named is found. Returns nil if a Named cannot be found. It also returns the
-// number of Pointers it had to walk to find the name.
-func flattenToNamed(t types.Type) (*types.Named, int) {
-	numPtr := 0
-	for {
-		if named, ok := t.(*types.Named); ok {
-			return named, numPtr
-		} else if ptr, ok := t.(*types.Pointer); ok {
-			t = ptr.Elem()
-			numPtr++
-		} else {
-			return nil, numPtr
-		}
-	}
-}
-
 func sentence(parts []string) string {
 	if len(parts) == 0 {
 		return ""
