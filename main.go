@@ -252,7 +252,7 @@ func printSitesAndExit(sites []copySite, fset *token.FileSet) {
 		fmt.Printf("%s\n\n", f)
 	}
 	if len(sites) > 0 {
-		os.Exit(1)
+		os.Exit(2)
 	}
 }
 
