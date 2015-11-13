@@ -262,7 +262,7 @@ type copySite struct {
 }
 
 // sortedCopySites sorts copySites as ordered by the filename, line, and column
-// the copySite was created at.
+// the func was found at.
 type sortedCopySites struct {
 	sites []copySite
 	fset  *token.FileSet
