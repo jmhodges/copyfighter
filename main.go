@@ -183,42 +183,44 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 
 	sites := []copySite{}
 	for _, obj := range info.Defs {
-		if f, ok := obj.(*types.Func); ok {
-			s := f.Type().(*types.Signature)
-			shouldBe := []string{}
-			if s.Recv() != nil {
-				// If the func is a method, check the receiver
-				rt := s.Recv().Type()
-				if isWideStructTyped(rt, wideStructs) {
-					shouldBe = append(shouldBe, "receiver")
-				}
+		f, ok := obj.(*types.Func)
+		if !ok {
+			continue
+		}
+		s := f.Type().(*types.Signature)
+		shouldBe := []string{}
+		if s.Recv() != nil {
+			// If the func is a method, check the receiver
+			rt := s.Recv().Type()
+			if isWideStructTyped(rt, wideStructs) {
+				shouldBe = append(shouldBe, "receiver")
 			}
+		}
 
-			params := s.Params()
-			for i := 0; i < params.Len(); i++ {
-				v := params.At(i)
-				if isWideStructTyped(v.Type(), wideStructs) {
-					name := v.Name()
-					parameter := "parameter"
-					if name != "" {
-						parameter = fmt.Sprintf("parameter '%s'", name)
-					}
-					shouldBe = append(shouldBe,
-						fmt.Sprintf("%s at index %d", parameter, i))
+		params := s.Params()
+		for i := 0; i < params.Len(); i++ {
+			v := params.At(i)
+			if isWideStructTyped(v.Type(), wideStructs) {
+				name := v.Name()
+				parameter := "parameter"
+				if name != "" {
+					parameter = fmt.Sprintf("parameter '%s'", name)
 				}
+				shouldBe = append(shouldBe,
+					fmt.Sprintf("%s at index %d", parameter, i))
 			}
+		}
 
-			results := s.Results()
-			for i := 0; i < results.Len(); i++ {
-				v := results.At(i)
-				if isWideStructTyped(v.Type(), wideStructs) {
-					shouldBe = append(shouldBe,
-						fmt.Sprintf("return value '%s' at index %d", v.Type(), i))
-				}
+		results := s.Results()
+		for i := 0; i < results.Len(); i++ {
+			v := results.At(i)
+			if isWideStructTyped(v.Type(), wideStructs) {
+				shouldBe = append(shouldBe,
+					fmt.Sprintf("return value '%s' at index %d", v.Type(), i))
 			}
-			if len(shouldBe) > 0 {
-				sites = append(sites, copySite{f, shouldBe})
-			}
+		}
+		if len(shouldBe) > 0 {
+			sites = append(sites, copySite{f, shouldBe})
 		}
 	}
 	return sites, nil
