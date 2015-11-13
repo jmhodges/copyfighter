@@ -267,14 +267,13 @@ func (s sortedCopySites) Less(i, j int) bool {
 	left := s.fset.Position(s.sites[i].fun.Pos())
 	right := s.fset.Position(s.sites[j].fun.Pos())
 
-	if left.Filename == right.Filename {
-		if left.Line == right.Line {
-			return left.Column < right.Column
-		}
+	if left.Filename != right.Filename {
+		return left.Filename < right.Filename
+	}
+	if left.Line != right.Line {
 		return left.Line < right.Line
 	}
-
-	return left.Filename < right.Filename
+	return left.Column < right.Column
 }
 
 // isWideStructTyped returns true if the given type is a struct (not a pointer to
