@@ -33,8 +33,6 @@ func main() {
 	}
 	p := flag.Arg(0)
 
-	log.Printf("XXX maxStructWidth %d", *maxStructWidth)
-
 	fset := token.NewFileSet()
 
 	// TODO(#1): support '...' in filesystem dir
