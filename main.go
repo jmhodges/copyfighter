@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	maxStructWidth = flag.Int64("max", 16, "maximum size in bytes a struct can be before by-value uses are flagged")
+	maxStructWidth = flag.Int64("maxx", 16, "maximum size in bytes a struct can be before by-value uses are flagged")
 	wordSize       = flag.Int64("wordSize", 8, "word size to assume when calculation struct size")
 	maxAlign       = flag.Int64("maxAlign", 8, "maximum word alignment to assume when calculating struct size")
 )
@@ -28,10 +28,12 @@ func main() {
 	log.SetFlags(0)
 	flag.Parse()
 
-	if len(os.Args) == 1 {
+	if flag.NArg() != 1 {
 		log.Fatalf("usage: %s GO_PKG_DIR", os.Args[0])
 	}
-	p := os.Args[1]
+	p := flag.Arg(0)
+
+	log.Printf("XXX maxStructWidth %d", *maxStructWidth)
 
 	fset := token.NewFileSet()
 
