@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	maxStructWidth = flag.Int64("maxx", 16, "maximum size in bytes a struct can be before by-value uses are flagged")
+	maxStructWidth = flag.Int64("max", 16, "maximum size in bytes a struct can be before by-value uses are flagged")
 	wordSize       = flag.Int64("wordSize", 8, "word size to assume when calculation struct size")
 	maxAlign       = flag.Int64("maxAlign", 8, "maximum word alignment to assume when calculating struct size")
 )
