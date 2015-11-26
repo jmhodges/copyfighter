@@ -240,6 +240,7 @@ func printSitesAndExit(sites []copySite, fset *token.FileSet) {
 	sort.Sort(sortedCopySites{sites: sites, fset: fset})
 	for _, site := range sites {
 		f := site.fun
+		p := fset.Position(f.Pos())
 		shouldBe := site.shouldBe
 		sb := sentence(shouldBe)
 		msg := "should be made into"
@@ -248,8 +249,7 @@ func printSitesAndExit(sites []copySite, fset *token.FileSet) {
 		} else {
 			msg += " a pointer"
 		}
-		fmt.Println("#", sb, msg)
-		fmt.Printf("%s\n\n", f)
+		fmt.Printf("%s:%d:%s: %s %s\n", p.Filename, p.Line, f, sb, msg)
 	}
 	if len(sites) > 0 {
 		os.Exit(2)
