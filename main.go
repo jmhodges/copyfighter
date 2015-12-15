@@ -28,7 +28,7 @@ func main() {
 	log.SetFlags(0)
 	flag.Parse()
 
-	if flag.NArg() == 1 {
+	if flag.NArg() != 1 {
 		log.Fatalf("usage: %s GO_PKG_DIR", os.Args[0])
 	}
 	p := flag.Arg(0)
