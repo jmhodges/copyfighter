@@ -28,10 +28,10 @@ func main() {
 	log.SetFlags(0)
 	flag.Parse()
 
-	if len(os.Args) == 1 {
+	if flag.NArg() == 1 {
 		log.Fatalf("usage: %s GO_PKG_DIR", os.Args[0])
 	}
-	p := os.Args[1]
+	p := flag.Arg(0)
 
 	fset := token.NewFileSet()
 
