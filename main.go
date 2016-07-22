@@ -9,6 +9,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -32,36 +33,51 @@ func main() {
 		log.Fatalf("usage: %s GO_PKG_DIR", os.Args[0])
 	}
 	p := flag.Arg(0)
+	sites, fset, err := check(p, *maxStructWidth, *wordSize, *maxAlign)
+	if err != nil {
+		log.Fatal(err)
+	}
+	printSites(sites, fset, os.Stdout)
+	if len(sites) > 0 {
+		os.Exit(2)
+	}
 
+}
+
+func check(p string, maxStructWidth, wordSize, maxAlign int64) ([]copySite, *token.FileSet, error) {
 	fset := token.NewFileSet()
 
-	// TODO(#1): support '...' in filesystem dir
-	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, ".") {
-		pkg, err := parsePkgDir(p, fset)
-		if err != nil {
-			log.Fatal(err)
-		}
-		sites, err := checkPkg(pkg, fset, *maxStructWidth, *wordSize, *maxAlign)
-		if err != nil {
-			log.Fatal(err)
-		}
-		printSitesAndExit(sites, fset)
-	} else {
+	_, err := os.Stat(p)
+	switch {
+	case os.IsNotExist(err):
+		// File doesn't exist, probably a Go import path
 		pkgs, err := parseGoPkg(p, fset)
 		if err != nil {
-			log.Fatal(err)
+			return nil, nil, err
 		}
 		sites := []copySite{}
 		for _, pkg := range pkgs {
-			s, err := checkPkg(pkg, fset, *maxStructWidth, *wordSize, *maxAlign)
+			s, err := checkPkg(pkg, fset, maxStructWidth, wordSize, maxAlign)
 			if err != nil {
-				log.Fatal(err)
+				return nil, nil, err
 			}
 			sites = append(sites, s...)
 		}
-		printSitesAndExit(sites, fset)
+		return sites, fset, nil
+	case err == nil:
+		// File exists, parses as such
+		pkg, err := parsePkgDir(p, fset)
+		if err != nil {
+			return nil, nil, err
+		}
+		sites, err := checkPkg(pkg, fset, maxStructWidth, wordSize, maxAlign)
+		if err != nil {
+			return nil, nil, err
+		}
+		return sites, fset, nil
+	default:
+		return nil, nil, err
 	}
-
 }
 
 func parsePkgDir(p string, fset *token.FileSet) (*ast.Package, error) {
@@ -236,7 +252,7 @@ func findCopySites(funcs []*types.Func, wideStructs map[string]bool) []copySite 
 	return sites
 }
 
-func printSitesAndExit(sites []copySite, fset *token.FileSet) {
+func printSites(sites []copySite, fset *token.FileSet, w io.Writer) {
 	sort.Sort(sortedCopySites{sites: sites, fset: fset})
 	for _, site := range sites {
 		f := site.fun
@@ -251,10 +267,7 @@ func printSitesAndExit(sites []copySite, fset *token.FileSet) {
 		pos := site.fun.Pos()
 		file := fset.File(pos)
 		position := file.Position(pos)
-		fmt.Printf("%s:%d:%d: %s %s (%s)\n", file.Name(), position.Line, position.Column, sb, msg, f)
-	}
-	if len(sites) > 0 {
-		os.Exit(2)
+		fmt.Fprintf(w, "%s:%d:%d: %s %s (%s)\n", file.Name(), position.Line, position.Column, sb, msg, f)
 	}
 }
 
