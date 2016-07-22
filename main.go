@@ -248,8 +248,10 @@ func printSitesAndExit(sites []copySite, fset *token.FileSet) {
 		} else {
 			msg += " a pointer"
 		}
-		fmt.Println("#", sb, msg)
-		fmt.Printf("%s\n\n", f)
+		pos := site.fun.Pos()
+		file := fset.File(pos)
+		position := file.Position(pos)
+		fmt.Printf("%s:%d:%d: %s %s (%s)\n", file.Name(), position.Line, position.Column, sb, msg, f)
 	}
 	if len(sites) > 0 {
 		os.Exit(2)
