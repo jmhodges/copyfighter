@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/build"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -16,6 +15,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"golang.org/x/tools/go/gcexportdata"
 )
 
 var (
@@ -172,10 +173,11 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 		Types: make(map[ast.Expr]types.TypeAndValue),
 		Defs:  make(map[*ast.Ident]types.Object),
 	}
+
 	conf := &types.Config{
-		Importer:                 importer.Default(),
+		Importer:                 gcexportdata.NewImporter(fset, make(map[string]*types.Package)),
 		DisableUnusedImportCheck: true,
-		Sizes: sizes,
+		Sizes:                    sizes,
 	}
 	files := []*ast.File{}
 	for _, f := range pkg.Files {
