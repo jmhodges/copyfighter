@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/build"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -16,6 +15,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"golang.org/x/tools/go/gcexportdata"
 )
 
 var (
@@ -89,7 +90,22 @@ func parsePkgDir(p string, fset *token.FileSet) (*ast.Package, error) {
 		return nil, fmt.Errorf("%#v is not a directory", p)
 	}
 
-	mp, err := parser.ParseDir(fset, p, nil, 0)
+	buildContext := build.Default
+	bpkg, _ := buildContext.ImportDir(p, 0)
+
+	mp, err := parser.ParseDir(fset, p, func(i os.FileInfo) bool {
+		for _, f := range bpkg.IgnoredGoFiles {
+			if f == i.Name() {
+				return false
+			}
+		}
+		for _, f := range bpkg.InvalidGoFiles {
+			if f == i.Name() {
+				return false
+			}
+		}
+		return true
+	}, 0)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse package at %#v: %s", p, err)
 	}
@@ -172,10 +188,11 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 		Types: make(map[ast.Expr]types.TypeAndValue),
 		Defs:  make(map[*ast.Ident]types.Object),
 	}
+
 	conf := &types.Config{
-		Importer:                 importer.Default(),
+		Importer:                 gcexportdata.NewImporter(fset, make(map[string]*types.Package)),
 		DisableUnusedImportCheck: true,
-		Sizes: sizes,
+		Sizes:                    sizes,
 	}
 	files := []*ast.File{}
 	for _, f := range pkg.Files {
