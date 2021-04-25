@@ -91,7 +91,10 @@ func parsePkgDir(p string, fset *token.FileSet) (*ast.Package, error) {
 	}
 
 	buildContext := build.Default
-	bpkg, _ := buildContext.ImportDir(p, 0)
+	bpkg, err := buildContext.ImportDir(p, 0)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse package at %#v: %s", p, err)
+	}
 
 	mp, err := parser.ParseDir(fset, p, func(i os.FileInfo) bool {
 		for _, f := range bpkg.IgnoredGoFiles {
