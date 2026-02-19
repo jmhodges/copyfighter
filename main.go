@@ -212,8 +212,12 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 	funcs := []*types.Func{}
 	for _, obj := range info.Defs {
 		if tn, ok := obj.(*types.TypeName); ok {
-			if sizes.Sizeof(tn.Type()) > maxWidth {
-				wideStructs[tn.Id()] = true
+			// Only compute Sizeof for struct types. Sizeof panics on
+			// interfaces and other non-concrete types in Go 1.25+.
+			if _, isStruct := tn.Type().Underlying().(*types.Struct); isStruct {
+				if sizes.Sizeof(tn.Type()) > maxWidth {
+					wideStructs[tn.Id()] = true
+				}
 			}
 		}
 		if f, ok := obj.(*types.Func); ok {
