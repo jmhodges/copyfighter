@@ -341,6 +341,78 @@ type J interface{ M(G[int64]) }
 	}
 }
 
+// An alias is another name for its target type, so passing a wide struct
+// under an alias copies it all the same.
+func TestCheckAliases(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "alias of a wide struct is flagged everywhere",
+			src: `package p
+type big struct{ a, b, c int64 }
+type A = big
+func (b big) M(a A) A { return a }
+func F(a A) {}
+`,
+			want: `src.go:4:14: receiver, parameter 'a' at index 0, and return value 'A' at index 0 should be made into pointers (func (big).M(a A) A)
+src.go:5:6: parameter 'a' at index 0 should be made into a pointer (func F(a A))
+`,
+		},
+		{
+			name: "alias of an alias",
+			src: `package p
+type big struct{ a, b, c int64 }
+type A = big
+type B = A
+func F(b B) {}
+`,
+			want: "src.go:5:6: parameter 'b' at index 0 should be made into a pointer (func F(b B))\n",
+		},
+		{
+			name: "alias of a pointer to a wide struct is fine",
+			src: `package p
+type big struct{ a, b, c int64 }
+type A = *big
+func F(a A) {}
+`,
+			want: "",
+		},
+		{
+			name: "alias of a narrow struct is fine",
+			src: `package p
+type small struct{ a, b int64 }
+type A = small
+func F(a A) {}
+`,
+			want: "",
+		},
+		{
+			name: "generic aliases",
+			src: `package p
+type G[T any] struct{ a, b, c T }
+type GI = G[int64]
+type GA[T any] = G[T]
+func F(g GI) {}
+func H(g GA[int64]) {}
+func (g G[T]) M(o GA[T]) {}
+`,
+			want: `src.go:5:6: parameter 'g' at index 0 should be made into a pointer (func F(g GI))
+src.go:6:6: parameter 'g' at index 0 should be made into a pointer (func H(g GA[int64]))
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if actual := checkSource(t, tt.src); actual != tt.want {
+				t.Errorf("want:\n%s\n=============\ngot:\n%s", tt.want, actual)
+			}
+		})
+	}
+}
+
 // Files excluded by build constraints must not be parsed or type checked, or a
 // package could never be checked on a platform it isn't targeting.
 func TestCheckSkipsFilesExcludedByBuildConstraints(t *testing.T) {

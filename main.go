@@ -337,9 +337,12 @@ type wideStructChecker struct {
 }
 
 // isWide returns true if the given type is a struct (not a pointer to a
-// struct) declared in the package being checked and wider than maxWidth.
+// struct) declared in the package being checked and wider than maxWidth. An
+// alias of such a struct counts too.
 func (c *wideStructChecker) isWide(t types.Type) bool {
-	named, ok := t.(*types.Named)
+	// An alias is just another name for its target, so a wide struct is
+	// still copied when it is passed under an alias.
+	named, ok := types.Unalias(t).(*types.Named)
 	if !ok {
 		return false
 	}
