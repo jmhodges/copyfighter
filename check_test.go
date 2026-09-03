@@ -26,6 +26,14 @@ const goldenData = `testdata/inner.go:24:6: parameter 'f' at index 0 should be m
 testdata/inner.go:28:14: receiver, and parameter 'o' at index 0 should be made into pointers (func (Foo).OnOtherToo(o other))
 testdata/inner.go:32:16: receiver should be made into a pointer (func (other).OnStruct())
 testdata/inner.go:35:16: receiver should be made into a pointer (func (other).OnStruct2())
+testdata/inner.go:59:6: parameter 'c' at index 0 should be made into a pointer (func Configure(c config))
+testdata/inner.go:63:17: receiver should be made into a pointer (func (config).Validate())
+`
+
+// defaultGoldenData is the output for testdata under the default limit of 64
+// bytes, which only config exceeds.
+const defaultGoldenData = `testdata/inner.go:59:6: parameter 'c' at index 0 should be made into a pointer (func Configure(c config))
+testdata/inner.go:63:17: receiver should be made into a pointer (func (config).Validate())
 `
 
 // The sites come out of checkPkg in map iteration order, so printSites has to
@@ -51,8 +59,9 @@ func TestPrintSitesSortsByPosition(t *testing.T) {
 	}
 }
 
-// In testdata, Foo is an http.Client (hundreds of bytes) and other is exactly
-// 32 bytes on a 64-bit word size: an int64, a pointer, and an interface.
+// In testdata on a 64-bit word size, Foo is an http.Client (48 bytes), other is
+// exactly 32 bytes (an int64, a pointer, and an interface), and config is 72
+// bytes (two strings, two int64s, and a slice).
 func TestMaxStructWidth(t *testing.T) {
 	tests := []struct {
 		name string
@@ -60,7 +69,12 @@ func TestMaxStructWidth(t *testing.T) {
 		want string
 	}{
 		{
-			name: "default flags everything wider than two words",
+			name: "default flags only structs wider than 64 bytes",
+			max:  *maxStructWidth,
+			want: defaultGoldenData,
+		},
+		{
+			name: "two words flags everything in testdata",
 			max:  16,
 			want: goldenData,
 		},
@@ -69,6 +83,8 @@ func TestMaxStructWidth(t *testing.T) {
 			max:  32,
 			want: `testdata/inner.go:24:6: parameter 'f' at index 0 should be made into a pointer (func CallsFoo(f Foo))
 testdata/inner.go:28:14: receiver should be made into a pointer (func (Foo).OnOtherToo(o other))
+testdata/inner.go:59:6: parameter 'c' at index 0 should be made into a pointer (func Configure(c config))
+testdata/inner.go:63:17: receiver should be made into a pointer (func (config).Validate())
 `,
 		},
 		{
@@ -99,7 +115,8 @@ testdata/inner.go:28:14: receiver should be made into a pointer (func (Foo).OnOt
 
 // With 4 byte words the other struct in testdata shrinks from 32 bytes to 20
 // (int64 + pointer + interface), so a limit of 24 bytes flags it on a 64-bit
-// word size but not on a 32-bit one.
+// word size but not on a 32-bit one. Foo (28 bytes) and config (44 bytes) are
+// still over the limit.
 func TestWordSize(t *testing.T) {
 	tests := []struct {
 		name               string
@@ -118,6 +135,8 @@ func TestWordSize(t *testing.T) {
 			maxAlign: 4,
 			want: `testdata/inner.go:24:6: parameter 'f' at index 0 should be made into a pointer (func CallsFoo(f Foo))
 testdata/inner.go:28:14: receiver should be made into a pointer (func (Foo).OnOtherToo(o other))
+testdata/inner.go:59:6: parameter 'c' at index 0 should be made into a pointer (func Configure(c config))
+testdata/inner.go:63:17: receiver should be made into a pointer (func (config).Validate())
 `,
 		},
 	}
@@ -137,8 +156,8 @@ testdata/inner.go:28:14: receiver should be made into a pointer (func (Foo).OnOt
 }
 
 // checkSource writes src to a fresh directory as a single Go file, runs check
-// over it with the default flags, and returns the printed output with the
-// temporary file path replaced by "src.go".
+// over it with a 16 byte limit and 64-bit words, and returns the printed output
+// with the temporary file path replaced by "src.go".
 func checkSource(t *testing.T, src string) string {
 	t.Helper()
 	dir := t.TempDir()

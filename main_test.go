@@ -32,7 +32,7 @@ func TestCLI(t *testing.T) {
 			name:       "copy sites found",
 			args:       []string{"./testdata"},
 			wantCode:   2,
-			wantStdout: goldenData,
+			wantStdout: defaultGoldenData,
 		},
 		{
 			name:     "flags before the package narrow the results",
@@ -40,6 +40,8 @@ func TestCLI(t *testing.T) {
 			wantCode: 2,
 			wantStdout: `testdata/inner.go:24:6: parameter 'f' at index 0 should be made into a pointer (func CallsFoo(f Foo))
 testdata/inner.go:28:14: receiver should be made into a pointer (func (Foo).OnOtherToo(o other))
+testdata/inner.go:59:6: parameter 'c' at index 0 should be made into a pointer (func Configure(c config))
+testdata/inner.go:63:17: receiver should be made into a pointer (func (config).Validate())
 `,
 		},
 		{
@@ -48,6 +50,8 @@ testdata/inner.go:28:14: receiver should be made into a pointer (func (Foo).OnOt
 			wantCode: 2,
 			wantStdout: `testdata/inner.go:24:6: parameter 'f' at index 0 should be made into a pointer (func CallsFoo(f Foo))
 testdata/inner.go:28:14: receiver should be made into a pointer (func (Foo).OnOtherToo(o other))
+testdata/inner.go:59:6: parameter 'c' at index 0 should be made into a pointer (func Configure(c config))
+testdata/inner.go:63:17: receiver should be made into a pointer (func (config).Validate())
 `,
 		},
 		{
