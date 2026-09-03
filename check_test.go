@@ -261,6 +261,86 @@ src.go:5:6: parameter 'b' at index 0 should be made into a pointer (func Y(b big
 	}
 }
 
+// Generic structs have no size until they are instantiated, and asking
+// go/types for the size of a type parameter panics. Uses with concrete type
+// arguments are sized and reported; uses that still mention a type parameter
+// are skipped.
+func TestCheckGenericStructs(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "instantiation is sized with its type arguments",
+			src: `package p
+type G[T any] struct{ a, b, c T }
+func F(g G[int64]) {}
+func H(g G[byte]) {}
+`,
+			want: "src.go:3:6: parameter 'g' at index 0 should be made into a pointer (func F(g G[int64]))\n",
+		},
+		{
+			name: "generic method receiver and signature are skipped",
+			src: `package p
+type G[T any] struct{ a, b, c T }
+func (g G[T]) M(o G[T]) G[T] { return o }
+`,
+			want: "",
+		},
+		{
+			name: "receiver whose size does not depend on the type parameter is reported",
+			src: `package p
+type P[T comparable] struct{ p *T; s []T; m map[T]T; a, b int64 }
+func (p P[T]) M() {}
+`,
+			want: "src.go:3:15: receiver should be made into a pointer (func (P[T]).M())\n",
+		},
+		{
+			name: "array of the type parameter",
+			src: `package p
+type A[T any] struct{ arr [4]T }
+func (a A[T]) M() {}
+func F(a A[int64], b A[byte]) {}
+`,
+			want: "src.go:4:6: parameter 'a' at index 0 should be made into a pointer (func F(a A[int64], b A[byte]))\n",
+		},
+		{
+			name: "generic struct nested in another generic struct",
+			src: `package p
+type G[T any] struct{ a, b, c T }
+type Outer[T any] struct{ g G[T] }
+func (o Outer[T]) M() {}
+func F(o Outer[int64]) {}
+`,
+			want: "src.go:5:6: parameter 'o' at index 0 should be made into a pointer (func F(o Outer[int64]))\n",
+		},
+		{
+			name: "struct declared inside a generic function",
+			src: `package p
+func F[T any]() { type inner struct{ a, b, c T }; _ = inner{} }
+`,
+			want: "",
+		},
+		{
+			name: "interface methods",
+			src: `package p
+type G[T any] struct{ a, b, c T }
+type I[T any] interface{ M(G[T]) }
+type J interface{ M(G[int64]) }
+`,
+			want: "src.go:4:19: parameter at index 0 should be made into a pointer (func (J).M(G[int64]))\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if actual := checkSource(t, tt.src); actual != tt.want {
+				t.Errorf("want:\n%s\n=============\ngot:\n%s", tt.want, actual)
+			}
+		})
+	}
+}
+
 // Files excluded by build constraints must not be parsed or type checked, or a
 // package could never be checked on a platform it isn't targeting.
 func TestCheckSkipsFilesExcludedByBuildConstraints(t *testing.T) {
