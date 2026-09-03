@@ -13,7 +13,13 @@ Copyfighter's static analysis will identify where large structs, without
 pointers, are being used as method receivers, function parameters and return
 values.
 
-Install with `go get` or similar.
+Install
+-------
+    go install github.com/jmhodges/copyfighter@latest
+
+or pin a release:
+
+    go install github.com/jmhodges/copyfighter@v1.0.0
 
 Example output
 ---------------
