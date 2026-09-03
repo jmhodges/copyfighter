@@ -207,15 +207,17 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 		return nil, fmt.Errorf("unable to type check package %#v: %s", pkg.Name, err)
 	}
 
-	wideStructs := make(map[string]bool)
+	checker := &wideStructChecker{
+		sizes:        sizes,
+		maxWidth:     maxWidth,
+		localStructs: make(map[*types.TypeName]bool),
+	}
 
 	funcs := []*types.Func{}
 	for _, obj := range info.Defs {
 		if tn, ok := obj.(*types.TypeName); ok {
 			if _, ok := tn.Type().Underlying().(*types.Struct); ok {
-				if sizes.Sizeof(tn.Type()) > maxWidth {
-					wideStructs[tn.Id()] = true
-				}
+				checker.localStructs[tn] = true
 			}
 		}
 		if f, ok := obj.(*types.Func); ok {
@@ -223,15 +225,14 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 		}
 	}
 
-	sites := findCopySites(funcs, wideStructs)
+	sites := findCopySites(funcs, checker)
 
 	return sites, nil
 }
 
 // findCopySites returns a slice of copySites that represent Go function calls
-// that use a large struct without a pointer to it. The wideStructs argument is
-// a map of the struct's TypeName id to its TypeName object.
-func findCopySites(funcs []*types.Func, wideStructs map[string]bool) []copySite {
+// that use a large struct without a pointer to it.
+func findCopySites(funcs []*types.Func, checker *wideStructChecker) []copySite {
 	sites := []copySite{}
 	for _, f := range funcs {
 		s := f.Type().(*types.Signature)
@@ -240,7 +241,7 @@ func findCopySites(funcs []*types.Func, wideStructs map[string]bool) []copySite 
 		// If the func is a method, check the receiver
 		if s.Recv() != nil {
 			rt := s.Recv().Type()
-			if isWideStructTyped(rt, wideStructs) {
+			if checker.isWide(rt) {
 				shouldBe = append(shouldBe, "receiver")
 			}
 		}
@@ -248,7 +249,7 @@ func findCopySites(funcs []*types.Func, wideStructs map[string]bool) []copySite 
 		params := s.Params()
 		for i := 0; i < params.Len(); i++ {
 			v := params.At(i)
-			if isWideStructTyped(v.Type(), wideStructs) {
+			if checker.isWide(v.Type()) {
 				name := v.Name()
 				parameter := "parameter"
 				if name != "" {
@@ -262,7 +263,7 @@ func findCopySites(funcs []*types.Func, wideStructs map[string]bool) []copySite 
 		results := s.Results()
 		for i := 0; i < results.Len(); i++ {
 			v := results.At(i)
-			if isWideStructTyped(v.Type(), wideStructs) {
+			if checker.isWide(v.Type()) {
 				shouldBe = append(shouldBe,
 					fmt.Sprintf("return value '%s' at index %d", v.Type(), i))
 			}
@@ -325,11 +326,57 @@ func (s sortedCopySites) Less(i, j int) bool {
 	return left.Column < right.Column
 }
 
-// isWideStructTyped returns true if the given type is a struct (not a pointer to
-// a struct) that is in wideStructs.
-func isWideStructTyped(t types.Type, wideStructs map[string]bool) bool {
-	if named, ok := t.(*types.Named); ok {
-		return wideStructs[named.Obj().Id()]
+// wideStructChecker decides whether a type is a struct defined in the package
+// being checked that is too wide to be passed around by value.
+type wideStructChecker struct {
+	sizes    types.Sizes
+	maxWidth int64
+	// localStructs holds the named struct types declared in the package being
+	// checked. Only those are reported.
+	localStructs map[*types.TypeName]bool
+}
+
+// isWide returns true if the given type is a struct (not a pointer to a
+// struct) declared in the package being checked and wider than maxWidth.
+func (c *wideStructChecker) isWide(t types.Type) bool {
+	named, ok := t.(*types.Named)
+	if !ok {
+		return false
+	}
+	// For an instantiated generic type, Obj returns the type name of the
+	// generic declaration, so this matches G[int] to G.
+	if !c.localStructs[named.Obj()] {
+		return false
+	}
+	// A generic struct has no size until it is instantiated with concrete
+	// types, and the sizer panics on a type parameter. That rules out the
+	// declaration itself and a generic method's receiver, both of which are
+	// still written in terms of the struct's type parameters.
+	if hasTypeParam(named) {
+		return false
+	}
+	return c.sizes.Sizeof(t) > c.maxWidth
+}
+
+// hasTypeParam returns true if computing the size of t would require the size
+// of a type parameter. It only descends into the parts of a type that
+// contribute to its size: struct fields, array elements, and the underlying
+// types of named types. Anything behind a pointer, slice, map, channel,
+// function, or interface has a fixed size and is not visited.
+func hasTypeParam(t types.Type) bool {
+	switch t := t.(type) {
+	case *types.TypeParam:
+		return true
+	case *types.Named:
+		return hasTypeParam(t.Underlying())
+	case *types.Array:
+		return hasTypeParam(t.Elem())
+	case *types.Struct:
+		for i := 0; i < t.NumFields(); i++ {
+			if hasTypeParam(t.Field(i).Type()) {
+				return true
+			}
+		}
 	}
 	return false
 }
