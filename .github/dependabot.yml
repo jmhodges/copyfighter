@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # copyfighter reads packages' compiled export data via gcexportdata, so
+  # golang.org/x/tools has to stay roughly contemporaneous with the Go
+  # toolchain. Letting it drift is what broke the build before.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
