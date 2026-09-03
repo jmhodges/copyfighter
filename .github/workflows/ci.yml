@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
   # copyfighter type checks packages from their compiled export data, so it
   # tends to break when a new Go toolchain ships rather than when this repo
