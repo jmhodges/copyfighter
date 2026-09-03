@@ -13,7 +13,15 @@ Copyfighter's static analysis will identify where large structs, without
 pointers, are being used as method receivers, function parameters and return
 values.
 
-Install with `go get` or similar.
+Install with `go install github.com/jmhodges/copyfighter@latest`.
+
+Point it at a package directory, an import path, or a `...` pattern, the same
+way you would `go build` or `go vet`. It resolves packages with the go tool, so
+it works in any module:
+
+    $ copyfighter ./path/to/pkg
+    $ copyfighter github.com/you/yourmodule/...
+    $ copyfighter /some/other/checkout/pkg
 
 Example output
 ---------------
@@ -26,6 +34,8 @@ Example output
     path/to/pkg/client.go:28:14: receiver should be made into a pointer (func (Foo).OnOtherToo(o other))
     path/to/pkg/config.go:59:6: parameter 'c' at index 0 should be made into a pointer (func Configure(c config))
     path/to/pkg/config.go:63:17: receiver should be made into a pointer (func (config).Validate())
+
+Copyfighter exits with status 2 when it finds something to report.
 
 Defaults And Flags
 ------------------
@@ -45,7 +55,7 @@ through a call without touching memory. If that's all you care about, `-max
 128` is fine, but anything over 64 bytes still hits the copy routine every
 time it's assigned or returned.
 
-Flags like `-max` have to go before the package name.
+Flags like `-max` have to go before the package pattern.
 
 FAQ
 ---

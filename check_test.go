@@ -2,36 +2,55 @@ package main
 
 import (
 	"bytes"
-	"go/build"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
+// The package under test can be named as a relative directory, a bare
+// directory, or an import path, and all three come out the same.
 func TestGoldenPath(t *testing.T) {
-	sites, fset, err := check("./testdata", 16, 8, 8)
-	if err != nil {
-		t.Fatalf("unexpected error: %s", err)
+	patterns := []string{
+		"./testdata",
+		"testdata",
+		"github.com/jmhodges/copyfighter/testdata",
 	}
-	b := &bytes.Buffer{}
-	printSites(sites, fset, b)
-	actual := string(b.Bytes())
-	if goldenData != actual {
-		t.Errorf("output doesn't match, want:\n%s\n=============\ngot:\n%s", goldenData, actual)
+	for _, pattern := range patterns {
+		t.Run(pattern, func(t *testing.T) {
+			sites, fset, err := check(pattern, 16, 8, 8)
+			if err != nil {
+				t.Fatalf("unexpected error: %s", err)
+			}
+			b := &bytes.Buffer{}
+			printSites(sites, fset, b)
+			actual := string(b.Bytes())
+			if goldenData != actual {
+				t.Errorf("output doesn't match, want:\n%s\n=============\ngot:\n%s", goldenData, actual)
+			}
+		})
 	}
 }
 
-func TestGoPackageRange(t *testing.T) {
-	sites, fset, err := check("github.com/jmhodges/copyfighter/testdata/...", 16, 8, 8)
+// Loaded packages report absolute filenames. They are printed relative to
+// the current directory when they are under it, and untouched otherwise, so
+// that checking somebody else's checkout from anywhere still says where the
+// file is.
+func TestOutsideModule(t *testing.T) {
+	abs, err := filepath.Abs("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	sites, fset, err := check(abs, 16, 8, 8)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
 	b := &bytes.Buffer{}
 	printSites(sites, fset, b)
-	actual := string(b.Bytes())
-	if goldenData != actual {
-		t.Errorf("output doesn't match, want:\n%s\n=============\ngot:\n%s", goldenData, actual)
+	want := strings.ReplaceAll(goldenData, "testdata/", abs+string(filepath.Separator))
+	if actual := b.String(); want != actual {
+		t.Errorf("output doesn't match, want:\n%s\n=============\ngot:\n%s", want, actual)
 	}
 }
 
@@ -293,6 +312,41 @@ src.go:5:6: parameter 'b' at index 0 should be made into a pointer (func Y(b big
 	}
 }
 
+// Test files are their own packages as far as the go tool is concerned, so
+// an external test package alongside the one being checked is neither an
+// error nor checked itself.
+func TestCheckIgnoresTestFiles(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"a.go": `package a
+type big struct{ a, b, c int64 }
+func F(b big) {}
+`,
+		"a_test.go": `package a
+func G(b big) {}
+`,
+		"b_test.go": `package a_test
+type huge struct{ a, b, c, d int64 }
+func H(h huge) {}
+`,
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sites, fset, err := check(dir, 16, 8, 8)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	b := &bytes.Buffer{}
+	printSites(sites, fset, b)
+	want := filepath.Join(dir, "a.go") + ":3:6: parameter 'b' at index 0 should be made into a pointer (func F(b big))\n"
+	if actual := b.String(); actual != want {
+		t.Errorf("want:\n%s\n=============\ngot:\n%s", want, actual)
+	}
+}
+
 // Generic structs have no size until they are instantiated, and asking
 // go/types for the size of a type parameter panics. Uses with concrete type
 // arguments are sized and reported; uses that still mention a type parameter
@@ -522,7 +576,7 @@ func TestCheckErrors(t *testing.T) {
 			path: func(t *testing.T) string {
 				return writeFiles(t, map[string]string{"README": "nothing to see"})
 			},
-			want: "unable to parse package",
+			want: "no Go files in",
 		},
 		{
 			name: "directory with two packages",
@@ -532,17 +586,7 @@ func TestCheckErrors(t *testing.T) {
 					"b.go": "package b\n",
 				})
 			},
-			want: "unable to parse package",
-		},
-		{
-			name: "directory with an external test package",
-			path: func(t *testing.T) string {
-				return writeFiles(t, map[string]string{
-					"a.go":      "package a\n",
-					"a_test.go": "package a_test\n",
-				})
-			},
-			want: "more than one package found",
+			want: "found packages a (a.go) and b (b.go)",
 		},
 		{
 			name: "package that does not type check",
@@ -576,18 +620,14 @@ func TestCheckErrors(t *testing.T) {
 	}
 }
 
-// Import paths are resolved by walking GOPATH, and a trailing "..." matches
-// the named package and everything beneath it.
+// Import paths and "..." patterns are handed to the go tool, which resolves
+// them from the current directory the way go build would. A trailing "..."
+// matches the named package and everything beneath it.
 func TestCheckImportPath(t *testing.T) {
-	gopath := t.TempDir()
-	// parseGoPkg copies build.Default when it runs, so swapping GOPATH here
-	// takes effect.
-	origGOPATH := build.Default.GOPATH
-	build.Default.GOPATH = gopath
-	t.Cleanup(func() { build.Default.GOPATH = origGOPATH })
-
-	const root = "copyfightertest/pattern"
+	dir := t.TempDir()
+	const root = "pattern"
 	files := map[string]string{
+		"go.mod": "module copyfightertest\n\ngo 1.21\n",
 		root + "/a.go": `package pattern
 type big struct{ a, b, c int64 }
 func Top(b big) {}
@@ -596,7 +636,8 @@ func Top(b big) {}
 type big struct{ a, b, c int64 }
 func Nested(b big) {}
 `,
-		// Directories named testdata, or starting with . or _, are skipped.
+		// Directories named testdata, or starting with . or _, are skipped by
+		// "..." patterns, though they can still be named outright.
 		root + "/testdata/c.go": `package testdata
 type big struct{ a, b, c int64 }
 func Skipped(b big) {}
@@ -609,7 +650,7 @@ func Skipped(b big) {}
 		root + "/docs/README": "no go here\n",
 	}
 	for name, src := range files {
-		path := filepath.Join(gopath, "src", filepath.FromSlash(name))
+		path := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -617,18 +658,24 @@ func Skipped(b big) {}
 			t.Fatal(err)
 		}
 	}
-	topSite := filepath.Join(gopath, "src", root, "a.go") + ":3:6: parameter 'b' at index 0 should be made into a pointer (func Top(b big))\n"
-	nestedSite := filepath.Join(gopath, "src", root, "sub", "b.go") + ":3:6: parameter 'b' at index 0 should be made into a pointer (func Nested(b big))\n"
+	t.Chdir(dir)
+	topSite := filepath.Join(root, "a.go") + ":3:6: parameter 'b' at index 0 should be made into a pointer (func Top(b big))\n"
+	nestedSite := filepath.Join(root, "sub", "b.go") + ":3:6: parameter 'b' at index 0 should be made into a pointer (func Nested(b big))\n"
+	testdataSite := filepath.Join(root, "testdata", "c.go") + ":3:6: parameter 'b' at index 0 should be made into a pointer (func Skipped(b big))\n"
 
 	tests := []struct {
 		pkg  string
 		want string
 	}{
-		{root, topSite},
-		{root + "/sub", nestedSite},
-		{root + "/...", topSite + nestedSite},
+		{"copyfightertest/" + root, topSite},
+		{"copyfightertest/" + root + "/sub", nestedSite},
+		{"copyfightertest/" + root + "/...", topSite + nestedSite},
 		{"copyfightertest/...", topSite + nestedSite},
 		{"copyfightertest/pat...", topSite + nestedSite},
+		{"./" + root + "/...", topSite + nestedSite},
+		{root + "/...", topSite + nestedSite},
+		{"./...", topSite + nestedSite},
+		{"copyfightertest/" + root + "/testdata", testdataSite},
 	}
 	for _, tt := range tests {
 		t.Run(tt.pkg, func(t *testing.T) {
@@ -644,61 +691,11 @@ func Skipped(b big) {}
 		})
 	}
 
-	for _, pkg := range []string{root + "/testdata", root + "/_hidden", root + "/docs", root + "/nope/..."} {
+	for _, pkg := range []string{"copyfightertest/" + root + "/docs", "copyfightertest/" + root + "/nope/...", "./nope/...", "copyfightertest/nope"} {
 		t.Run("no match for "+pkg, func(t *testing.T) {
 			_, _, err := check(pkg, 16, 8, 8)
 			if err == nil || !strings.Contains(err.Error(), "unable to find packages matching") {
 				t.Errorf("want an unable to find packages error, got %v", err)
-			}
-		})
-	}
-}
-
-func TestPathToRegexp(t *testing.T) {
-	tests := []struct {
-		pattern string
-		matches []string
-		misses  []string
-	}{
-		{
-			pattern: "foo/bar",
-			matches: []string{"foo/bar"},
-			misses:  []string{"foo", "foo/bar/baz", "foo/barx", "xfoo/bar", "foo/ba"},
-		},
-		{
-			pattern: "foo/...",
-			matches: []string{"foo", "foo/bar", "foo/bar/baz"},
-			misses:  []string{"foobar", "fo", "bar/foo"},
-		},
-		{
-			pattern: "foo/b...",
-			matches: []string{"foo/b", "foo/bar", "foo/bar/baz"},
-			misses:  []string{"foo", "foo/car"},
-		},
-		{
-			pattern: "foo/.../baz",
-			matches: []string{"foo/bar/baz", "foo/a/b/baz", "foo//baz"},
-			misses:  []string{"foo/baz", "foo/bar/baz/qux"},
-		},
-		{
-			// Regexp metacharacters in the path are literal.
-			pattern: "foo.bar/v2+",
-			matches: []string{"foo.bar/v2+"},
-			misses:  []string{"fooxbar/v2+", "foo.bar/v2", "foo.bar/v22"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.pattern, func(t *testing.T) {
-			re := pathToRegexp(tt.pattern)
-			for _, m := range tt.matches {
-				if !re.MatchString(m) {
-					t.Errorf("%q should match %q (regexp %s)", tt.pattern, m, re)
-				}
-			}
-			for _, m := range tt.misses {
-				if re.MatchString(m) {
-					t.Errorf("%q should not match %q (regexp %s)", tt.pattern, m, re)
-				}
 			}
 		})
 	}

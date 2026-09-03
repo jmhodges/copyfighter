@@ -1,22 +1,19 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
-	"go/ast"
-	"go/build"
-	"go/parser"
 	"go/token"
 	"go/types"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
-	"golang.org/x/tools/go/gcexportdata"
+	"golang.org/x/tools/go/packages"
 )
 
 var (
@@ -31,7 +28,7 @@ func main() {
 	flag.Parse()
 
 	if flag.NArg() != 1 {
-		log.Fatalf("usage: %s GO_PKG_DIR", os.Args[0])
+		log.Fatalf("usage: %s GO_PKG_DIR_OR_PATTERN", os.Args[0])
 	}
 	p := flag.Arg(0)
 	sites, fset, err := check(p, *maxStructWidth, *wordSize, *maxAlign)
@@ -45,168 +42,165 @@ func main() {
 
 }
 
+// check loads the packages matching p and reports every function in them that
+// uses a struct wider than maxStructWidth bytes without a pointer to it. p is
+// anything the go tool accepts as a package pattern: a directory ("./pkg"), an
+// import path ("github.com/foo/bar"), or a pattern with wildcards
+// ("github.com/foo/bar/..."). A bare name of a directory that exists on disk is
+// treated as that directory rather than as an import path.
 func check(p string, maxStructWidth, wordSize, maxAlign int64) ([]copySite, *token.FileSet, error) {
 	fset := token.NewFileSet()
-
-	_, err := os.Stat(p)
-	switch {
-	case os.IsNotExist(err):
-		// File doesn't exist, probably a Go import path
-		pkgs, err := parseGoPkg(p, fset)
-		if err != nil {
-			return nil, nil, err
-		}
-		sites := []copySite{}
-		for _, pkg := range pkgs {
-			s, err := checkPkg(pkg, fset, maxStructWidth, wordSize, maxAlign)
-			if err != nil {
-				return nil, nil, err
-			}
-			sites = append(sites, s...)
-		}
-		return sites, fset, nil
-	case err == nil:
-		// File exists, parses as such
-		pkg, err := parsePkgDir(p, fset)
-		if err != nil {
-			return nil, nil, err
-		}
-		sites, err := checkPkg(pkg, fset, maxStructWidth, wordSize, maxAlign)
-		if err != nil {
-			return nil, nil, err
-		}
-		return sites, fset, nil
-	default:
+	pkgs, err := loadPkgs(p, fset)
+	if err != nil {
 		return nil, nil, err
 	}
+
+	sizes := &types.StdSizes{WordSize: wordSize, MaxAlign: maxAlign}
+	sites := []copySite{}
+	for _, pkg := range pkgs {
+		sites = append(sites, checkPkg(pkg, sizes, maxStructWidth)...)
+	}
+	return sites, fset, nil
 }
 
-func parsePkgDir(p string, fset *token.FileSet) (*ast.Package, error) {
-	fi, err := os.Stat(p)
+// loadTarget splits p into the directory to run the go tool in and the
+// pattern to give it. When p names a directory on disk, optionally followed by
+// "/...", the go tool runs inside that directory so that the module the
+// directory belongs to is found even when copyfighter is run from somewhere
+// else, and a bare "pkg" works the way it always has instead of being taken
+// for an import path. Anything else is an import path pattern, resolved from
+// the current directory.
+func loadTarget(p string) (dir, pattern string, err error) {
+	d, all := strings.CutSuffix(filepath.ToSlash(p), "/...")
+	d = filepath.FromSlash(d)
+	if d == "" {
+		return "", p, nil
+	}
+	fi, err := os.Stat(d)
 	if err != nil {
-		return nil, fmt.Errorf("unable to stat file %#v: %s", p, err)
+		if os.IsNotExist(err) {
+			return "", p, nil
+		}
+		return "", "", fmt.Errorf("unable to stat %#v: %s", d, err)
 	}
 	if !fi.IsDir() {
-		return nil, fmt.Errorf("%#v is not a directory", p)
+		return "", "", fmt.Errorf("%#v is not a directory", d)
 	}
-
-	buildContext := build.Default
-	bpkg, err := buildContext.ImportDir(p, 0)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse package at %#v: %s", p, err)
+	if all {
+		return d, "./...", nil
 	}
-
-	mp, err := parser.ParseDir(fset, p, func(i os.FileInfo) bool {
-		for _, f := range bpkg.IgnoredGoFiles {
-			if f == i.Name() {
-				return false
-			}
-		}
-		for _, f := range bpkg.InvalidGoFiles {
-			if f == i.Name() {
-				return false
-			}
-		}
-		return true
-	}, 0)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse package at %#v: %s", p, err)
-	}
-	if len(mp) != 1 {
-		var ps []string
-		for _, pkg := range mp {
-			ps = append(ps, pkg.Name)
-		}
-		return nil, fmt.Errorf("more than one package found in %#v: %s", p, strings.Join(ps, ","))
-	}
-	var pkg *ast.Package
-	for _, v := range mp {
-		pkg = v
-	}
-	return pkg, nil
+	return d, ".", nil
 }
 
-func pathToRegexp(p string) *regexp.Regexp {
-	re := regexp.QuoteMeta(p)
-	re = strings.Replace(re, `\.\.\.`, `.*`, -1)
-	// Special case: foo/... matches foo too.
-	if strings.HasSuffix(re, `/.*`) {
-		re = re[:len(re)-len(`/.*`)] + `(/.*)?`
+// loadPkgs parses and type checks the packages matching p, using the module
+// and build context the go tool would use. Dependencies are loaded from their
+// compiled export data rather than from source, so only the packages matching
+// p are type checked.
+func loadPkgs(p string, fset *token.FileSet) ([]*packages.Package, error) {
+	dir, pattern, err := loadTarget(p)
+	if err != nil {
+		return nil, err
 	}
-	return regexp.MustCompile(`^` + re + `$`)
-}
-
-func parseGoPkg(p string, fset *token.FileSet) ([]*ast.Package, error) {
-	p = filepath.Clean(p)
-	dirs := []string{}
-	re := pathToRegexp(p)
-	buildContext := build.Default
-	for _, src := range buildContext.SrcDirs() {
-		src = filepath.Clean(src) + string(filepath.Separator)
-		root := src
-		filepath.Walk(root, func(path string, fi os.FileInfo, err error) error {
-			if err != nil || !fi.IsDir() || path == src {
-				return nil
-			}
-
-			// Avoid .foo, _foo, and testdata directory trees.
-			_, elem := filepath.Split(path)
-			if strings.HasPrefix(elem, ".") || strings.HasPrefix(elem, "_") || elem == "testdata" {
-				return filepath.SkipDir
-			}
-			name := filepath.ToSlash(path[len(src):])
-			if re.MatchString(name) {
-				dirs = append(dirs, path)
-			}
-			return nil
-		})
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
+			packages.NeedTypes | packages.NeedTypesInfo,
+		Dir:  dir,
+		Fset: fset,
 	}
-
-	pkgs := []*ast.Package{}
-	for _, d := range dirs {
-		_, err := buildContext.ImportDir(d, 0)
-		if err != nil {
-			if _, noGo := err.(*build.NoGoError); noGo {
-				continue
-			}
-			return nil, fmt.Errorf("unable to build code in %#v: %s", d, err)
-		}
-		pkg, err := parsePkgDir(d, fset)
-		if err != nil {
-			return nil, err
-		}
-		pkgs = append(pkgs, pkg)
+	if dir != "" && !inModule(dir) {
+		// A directory that belongs to no module can still be checked on
+		// its own, the way a stray directory of Go files always could be.
+		// GOPATH mode is the only way to get the go tool to list one.
+		cfg.Env = append(os.Environ(), "GO111MODULE=off")
+	}
+	pkgs, err := packages.Load(cfg, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("unable to load packages matching %#v: %s", p, err)
 	}
 	if len(pkgs) == 0 {
 		return nil, fmt.Errorf("unable to find packages matching %#v", p)
 	}
-
+	for _, pkg := range pkgs {
+		if err := pkgError(p, pkg); err != nil {
+			return nil, err
+		}
+	}
 	return pkgs, nil
 }
 
-func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlign int64) ([]copySite, error) {
-	sizes := &types.StdSizes{WordSize: wordSize, MaxAlign: maxAlign}
-	info := &types.Info{
-		// Types is required to prevent duplicates, it seems, in Defs.
-		Types: make(map[ast.Expr]types.TypeAndValue),
-		Defs:  make(map[*ast.Ident]types.Object),
-	}
-
-	conf := &types.Config{
-		Importer:                 gcexportdata.NewImporter(fset, make(map[string]*types.Package)),
-		DisableUnusedImportCheck: true,
-		Sizes:                    sizes,
-	}
-	files := []*ast.File{}
-	for _, f := range pkg.Files {
-		files = append(files, f)
-	}
-
-	_, err := conf.Check("", fset, files, info)
+// inModule returns true if dir or one of its parents holds a go.mod file.
+func inModule(dir string) bool {
+	dir, err := filepath.Abs(dir)
 	if err != nil {
-		return nil, fmt.Errorf("unable to type check package %#v: %s", pkg.Name, err)
+		return false
 	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+}
 
+// pkgError turns the errors the go tool and type checker reported for pkg
+// into one error that says which step went wrong, or returns nil if there were
+// none. p is what the user asked to check.
+func pkgError(p string, pkg *packages.Package) error {
+	var listErrs, compileErrs, parseErrs, typeErrs, otherErrs []error
+	for _, pe := range pkg.Errors {
+		e := pkgErr(pe)
+		switch pe.Kind {
+		case packages.ListError:
+			// The go tool compiles a package to produce its export data,
+			// and reports one that fails to compile with the compiler's
+			// output, which starts with "# path". The type checker reports
+			// the same problems from source, so those are preferred.
+			if strings.HasPrefix(pe.Msg, "# ") {
+				compileErrs = append(compileErrs, e)
+			} else {
+				listErrs = append(listErrs, e)
+			}
+		case packages.ParseError:
+			parseErrs = append(parseErrs, e)
+		case packages.TypeError:
+			typeErrs = append(typeErrs, e)
+		default:
+			otherErrs = append(otherErrs, e)
+		}
+	}
+	switch {
+	case len(listErrs) > 0 && len(pkg.GoFiles) == 0:
+		return fmt.Errorf("unable to find packages matching %#v: %w", p, errors.Join(listErrs...))
+	case len(listErrs) > 0:
+		return fmt.Errorf("unable to load package %#v: %w", pkg.PkgPath, errors.Join(listErrs...))
+	case len(parseErrs) > 0:
+		return fmt.Errorf("unable to parse package %#v: %w", pkg.PkgPath, errors.Join(parseErrs...))
+	case len(typeErrs) > 0:
+		return fmt.Errorf("unable to type check package %#v: %w", pkg.Name, errors.Join(typeErrs...))
+	case len(otherErrs) > 0:
+		return fmt.Errorf("unable to load package %#v: %w", pkg.PkgPath, errors.Join(otherErrs...))
+	case len(compileErrs) > 0:
+		return fmt.Errorf("unable to compile package %#v: %w", pkg.PkgPath, errors.Join(compileErrs...))
+	}
+	return nil
+}
+
+// pkgErr returns e as an error, without the "-: " that go/packages puts in
+// front of an error that has no position.
+func pkgErr(e packages.Error) error {
+	if e.Pos == "" || e.Pos == "-" {
+		return errors.New(e.Msg)
+	}
+	return e
+}
+
+// checkPkg finds the functions in pkg that use a struct wider than maxWidth,
+// as measured by sizes, without a pointer to it.
+func checkPkg(pkg *packages.Package, sizes types.Sizes, maxWidth int64) []copySite {
 	checker := &wideStructChecker{
 		sizes:        sizes,
 		maxWidth:     maxWidth,
@@ -214,7 +208,7 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 	}
 
 	funcs := []*types.Func{}
-	for _, obj := range info.Defs {
+	for _, obj := range pkg.TypesInfo.Defs {
 		if tn, ok := obj.(*types.TypeName); ok {
 			if _, ok := tn.Type().Underlying().(*types.Struct); ok {
 				checker.localStructs[tn] = true
@@ -225,9 +219,7 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 		}
 	}
 
-	sites := findCopySites(funcs, checker)
-
-	return sites, nil
+	return findCopySites(funcs, checker)
 }
 
 // findCopySites returns a slice of copySites that represent Go function calls
@@ -265,7 +257,7 @@ func findCopySites(funcs []*types.Func, checker *wideStructChecker) []copySite {
 			v := results.At(i)
 			if checker.isWide(v.Type()) {
 				shouldBe = append(shouldBe,
-					fmt.Sprintf("return value '%s' at index %d", v.Type(), i))
+					fmt.Sprintf("return value '%s' at index %d", types.TypeString(v.Type(), qualifier(f.Pkg())), i))
 			}
 		}
 		if len(shouldBe) > 0 {
@@ -275,8 +267,24 @@ func findCopySites(funcs []*types.Func, checker *wideStructChecker) []copySite {
 	return sites
 }
 
+// qualifier returns a types.Qualifier that prints names from pkg bare and
+// names from any other package with that package's name, the way they would
+// be written in pkg's source.
+func qualifier(pkg *types.Package) types.Qualifier {
+	return func(other *types.Package) string {
+		if other == pkg {
+			return ""
+		}
+		return other.Name()
+	}
+}
+
 func printSites(sites []copySite, fset *token.FileSet, w io.Writer) {
 	sort.Sort(sortedCopySites{sites: sites, fset: fset})
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = ""
+	}
 	for _, site := range sites {
 		f := site.fun
 		shouldBe := site.shouldBe
@@ -287,11 +295,24 @@ func printSites(sites []copySite, fset *token.FileSet, w io.Writer) {
 		} else {
 			msg += " a pointer"
 		}
-		pos := site.fun.Pos()
-		file := fset.File(pos)
-		position := file.Position(pos)
-		fmt.Fprintf(w, "%s:%d:%d: %s %s (%s)\n", file.Name(), position.Line, position.Column, sb, msg, f)
+		position := fset.Position(f.Pos())
+		fmt.Fprintf(w, "%s:%d:%d: %s %s (%s)\n", displayPath(cwd, position.Filename), position.Line, position.Column, sb, msg, types.ObjectString(f, qualifier(f.Pkg())))
 	}
+}
+
+// displayPath returns name relative to cwd when name is inside cwd, and name
+// unchanged otherwise. Loaded packages report absolute filenames, and the
+// relative form is what a user running the tool from their module expects to
+// read.
+func displayPath(cwd, name string) string {
+	if cwd == "" || !filepath.IsAbs(name) {
+		return name
+	}
+	rel, err := filepath.Rel(cwd, name)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return name
+	}
+	return rel
 }
 
 type copySite struct {
