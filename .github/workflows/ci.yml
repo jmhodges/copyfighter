@@ -15,13 +15,37 @@ permissions:
   contents: read
 
 jobs:
+  go-versions:
+    # The test matrix is derived from go.mod rather than hard-coded, so bumping
+    # the `go` directive automatically moves the oldest tested toolchain along
+    # with it. Nothing in this file needs editing when that happens.
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: matrix
+        run: |
+          set -euo pipefail
+          # "go 1.25.0" -> "1.25". Also handles "go 1.25" and "go 1.25rc1".
+          minor="$(sed -nE 's/^go[[:space:]]+([0-9]+\.[0-9]+).*$/\1/p' go.mod | head -n1)"
+          if [ -z "$minor" ]; then
+            echo "::error file=go.mod::could not find a 'go' directive in go.mod" >&2
+            exit 1
+          fi
+          # The oldest toolchain go.mod allows (latest patch of that minor),
+          # plus the current release.
+          matrix="[\"${minor}.x\", \"stable\"]"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "Go test matrix: ${matrix}"
+
   test:
+    needs: go-versions
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # The oldest toolchain go.mod allows, plus the current release.
-        go-version: ['1.25.x', 'stable']
+        go-version: ${{ fromJSON(needs.go-versions.outputs.matrix) }}
     name: test (go ${{ matrix.go-version }})
     steps:
       - uses: actions/checkout@v7
