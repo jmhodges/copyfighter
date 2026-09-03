@@ -212,8 +212,10 @@ func checkPkg(pkg *ast.Package, fset *token.FileSet, maxWidth, wordSize, maxAlig
 	funcs := []*types.Func{}
 	for _, obj := range info.Defs {
 		if tn, ok := obj.(*types.TypeName); ok {
-			if sizes.Sizeof(tn.Type()) > maxWidth {
-				wideStructs[tn.Id()] = true
+			if _, ok := tn.Type().Underlying().(*types.Struct); ok {
+				if sizes.Sizeof(tn.Type()) > maxWidth {
+					wideStructs[tn.Id()] = true
+				}
 			}
 		}
 		if f, ok := obj.(*types.Func); ok {
