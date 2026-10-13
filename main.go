@@ -48,9 +48,16 @@ func main() {
 func check(p string, maxStructWidth, wordSize, maxAlign int64) ([]copySite, *token.FileSet, error) {
 	fset := token.NewFileSet()
 
-	_, err := os.Stat(p)
+	// A "..." pattern is never a literal directory, so don't stat it: if a
+	// leading element exists as a regular file, the stat fails with ENOTDIR
+	// rather than a not-exist error.
+	isPattern := strings.Contains(p, "...")
+	var err error
+	if !isPattern {
+		_, err = os.Stat(p)
+	}
 	switch {
-	case os.IsNotExist(err):
+	case isPattern || os.IsNotExist(err):
 		// File doesn't exist, probably a Go import path
 		pkgs, err := parseGoPkg(p, fset)
 		if err != nil {

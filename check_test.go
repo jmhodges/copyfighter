@@ -631,6 +631,26 @@ func Skipped(b big) {}
 		})
 	}
 
+	// A pattern whose leading element exists as a regular file in the working
+	// directory is still resolved as an import path rather than failing the
+	// stat with "not a directory".
+	t.Run("pattern prefix is a file in cwd", func(t *testing.T) {
+		wd := t.TempDir()
+		if err := os.WriteFile(filepath.Join(wd, "copyfightertest"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(wd)
+		sites, fset, err := check("copyfightertest/...", 16, 8, 8)
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
+		b := &bytes.Buffer{}
+		printSites(sites, fset, b)
+		if actual, want := b.String(), topSite+nestedSite; actual != want {
+			t.Errorf("want:\n%s\n=============\ngot:\n%s", want, actual)
+		}
+	})
+
 	for _, pkg := range []string{root + "/testdata", root + "/_hidden", root + "/docs", root + "/nope/..."} {
 		t.Run("no match for "+pkg, func(t *testing.T) {
 			_, _, err := check(pkg, 16, 8, 8)
